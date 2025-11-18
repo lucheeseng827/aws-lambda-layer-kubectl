@@ -1,0 +1,158 @@
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  AWS_DEFAULT_REGION: us-east-1
+  LAMBDA_REGION: us-east-1
+  LAYER_NAME: eks-kubectl-layer
+  DOCKER_DRIVER: overlay2
+
+# Build the Lambda layer
+build-layer:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - apk add --no-cache make bash
+  script:
+    - make build
+    - ls -lh layer.zip
+    - echo "Layer size $(du -h layer.zip | cut -f1)"
+  artifacts:
+    paths:
+      - layer.zip
+      - sam-layer.yaml
+      - sam.yaml
+      - samples/
+    expire_in: 7 days
+  tags:
+    - docker
+
+# Validate SAM templates and scripts
+test-validation:
+  stage: test
+  image: python:3.11-alpine
+  needs:
+    - build-layer
+  before_script:
+    - pip install aws-sam-cli
+    - apk add --no-cache bash
+  script:
+    - echo "Validating SAM templates..."
+    - sam validate --template-file sam-layer.yaml
+    - sam validate --template-file sam.yaml
+    - sam validate --template-file samples/serverless-functions/sam.yaml
+    - echo "Validating shell scripts..."
+    - bash -n main.sh
+    - bash -n bootstrap
+    - bash -n samples/serverless-functions/func.d/main.sh
+    - bash -n samples/serverless-functions/func.d/libs.sh
+    - echo "All validations passed!"
+  tags:
+    - docker
+
+# Deploy Lambda layer to AWS
+deploy-layer:
+  stage: deploy
+  image: public.ecr.aws/sam/build-provided:latest
+  needs:
+    - build-layer
+    - test-validation
+  before_script:
+    - pip install awscli aws-sam-cli
+  script:
+    - echo "Packaging Lambda layer..."
+    - sam package
+        --template-file sam-layer.yaml
+        --s3-bucket ${S3_BUCKET}
+        --output-template-file sam-layer-packaged.yaml
+        --region ${LAMBDA_REGION}
+    - echo "Deploying Lambda layer..."
+    - sam deploy
+        --template-file sam-layer-packaged.yaml
+        --stack-name ${LAYER_NAME}-stack
+        --parameter-overrides LayerName=${LAYER_NAME}
+        --capabilities CAPABILITY_IAM
+        --region ${LAMBDA_REGION}
+        --no-fail-on-empty-changeset
+    - echo "Getting Layer ARN..."
+    - |
+      LAYER_ARN=$(aws cloudformation describe-stacks \
+        --stack-name ${LAYER_NAME}-stack \
+        --query 'Stacks[0].Outputs[?OutputKey==`LayerVersionArn`].OutputValue' \
+        --output text \
+        --region ${LAMBDA_REGION})
+      echo "Layer ARN $LAYER_ARN"
+      echo "LAYER_ARN=$LAYER_ARN" >> deploy.env
+  artifacts:
+    reports:
+      dotenv: deploy.env
+  only:
+    - master
+    - main
+    - /^claude\/.*$/
+  tags:
+    - docker
+
+# Deploy Serverless Controller Function
+deploy-serverless-controller:
+  stage: deploy
+  image: public.ecr.aws/sam/build-provided:latest
+  needs:
+    - deploy-layer
+  before_script:
+    - pip install awscli aws-sam-cli
+  script:
+    - echo "Getting Layer ARN..."
+    - |
+      LAYER_ARN=$(aws cloudformation describe-stacks \
+        --stack-name ${LAYER_NAME}-stack \
+        --query 'Stacks[0].Outputs[?OutputKey==`LayerVersionArn`].OutputValue' \
+        --output text \
+        --region ${LAMBDA_REGION})
+      echo "Using Layer ARN $LAYER_ARN"
+    - echo "Deploying Serverless Controller..."
+    - cd samples/serverless-functions
+    - sam deploy
+        --template-file sam.yaml
+        --stack-name serverless-k8s-controller-stack
+        --parameter-overrides
+          ClusterName=${EKS_CLUSTER_NAME}
+          FunctionName=serverless-k8s-controller
+          LambdaLayerKubectlArn=${LAYER_ARN}
+          LambdaRoleArn=${LAMBDA_ROLE_ARN}
+        --capabilities CAPABILITY_IAM
+        --region ${LAMBDA_REGION}
+        --no-fail-on-empty-changeset
+    - echo "Deployment complete!"
+  only:
+    - master
+    - main
+    - /^claude\/.*$/
+  when: manual
+  tags:
+    - docker
+
+# Publish to SAR (Serverless Application Repository)
+publish-to-sar:
+  stage: deploy
+  image: public.ecr.aws/sam/build-provided:latest
+  needs:
+    - deploy-layer
+  before_script:
+    - pip install awscli aws-sam-cli
+  script:
+    - echo "Publishing to SAR..."
+    - LAMBDA_REGION=us-east-1 make clean layer-build sam-layer-package
+    - sam publish
+        --region us-east-1
+        --template sam-layer-packaged.yaml
+        --semantic-version ${CI_COMMIT_TAG:-2.0.0}
+    - echo "Published to SAR successfully!"
+  only:
+    - tags
+  tags:
+    - docker

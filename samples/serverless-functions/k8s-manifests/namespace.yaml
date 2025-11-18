@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: serverless-functions
+  labels:
+    name: serverless-functions
+    managed-by: lambda-kubectl

@@ -1,0 +1,4 @@
+{
+  "action": "list",
+  "cluster_name": "my-eks-cluster"
+}

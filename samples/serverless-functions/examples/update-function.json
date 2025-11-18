@@ -1,0 +1,8 @@
+{
+  "action": "update",
+  "cluster_name": "my-eks-cluster",
+  "function": {
+    "name": "hello-world",
+    "image": "nginx:1.25-alpine"
+  }
+}

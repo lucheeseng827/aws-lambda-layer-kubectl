@@ -1,0 +1,193 @@
+name: Build and Deploy Lambda Layer
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - 'claude/**'
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to AWS'
+        required: false
+        default: 'false'
+
+env:
+  AWS_REGION: us-east-1
+  LAMBDA_REGION: us-east-1
+
+jobs:
+  build:
+    name: Build Lambda Layer
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Lambda Layer
+        run: |
+          make build
+
+      - name: Verify layer.zip exists
+        run: |
+          ls -lh layer.zip
+          echo "Layer size: $(du -h layer.zip | cut -f1)"
+
+      - name: Upload layer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-layer
+          path: layer.zip
+          retention-days: 7
+
+  test:
+    name: Test Lambda Functions
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download layer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-layer
+
+      - name: Validate SAM templates
+        run: |
+          pip install aws-sam-cli
+          sam validate --template-file sam-layer.yaml
+          sam validate --template-file sam.yaml
+          sam validate --template-file samples/serverless-functions/sam.yaml
+
+      - name: Run shell script tests
+        run: |
+          bash -n main.sh
+          bash -n bootstrap
+          bash -n samples/serverless-functions/func.d/main.sh
+          bash -n samples/serverless-functions/func.d/libs.sh
+
+  deploy-layer:
+    name: Deploy Lambda Layer
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') || github.event.inputs.deploy == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download layer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-layer
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: Package Lambda Layer
+        run: |
+          sam package \
+            --template-file sam-layer.yaml \
+            --s3-bucket ${{ secrets.S3_BUCKET }} \
+            --output-template-file sam-layer-packaged.yaml \
+            --region ${{ env.LAMBDA_REGION }}
+
+      - name: Deploy Lambda Layer
+        run: |
+          sam deploy \
+            --template-file sam-layer-packaged.yaml \
+            --stack-name eks-kubectl-layer-stack \
+            --parameter-overrides LayerName=eks-kubectl-layer \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ env.LAMBDA_REGION }} \
+            --no-fail-on-empty-changeset
+
+      - name: Get Layer ARN
+        id: layer-arn
+        run: |
+          LAYER_ARN=$(aws cloudformation describe-stacks \
+            --stack-name eks-kubectl-layer-stack \
+            --query 'Stacks[0].Outputs[?OutputKey==`LayerVersionArn`].OutputValue' \
+            --output text \
+            --region ${{ env.LAMBDA_REGION }})
+          echo "layer_arn=$LAYER_ARN" >> $GITHUB_OUTPUT
+          echo "Layer ARN: $LAYER_ARN"
+
+      - name: Create release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Release v${{ github.run_number }}
+          body: |
+            Lambda Layer ARN: ${{ steps.layer-arn.outputs.layer_arn }}
+
+            ## Changes
+            - Automated build from commit ${{ github.sha }}
+          draft: false
+          prerelease: false
+
+  deploy-serverless-controller:
+    name: Deploy Serverless Controller
+    runs-on: ubuntu-latest
+    needs: [deploy-layer]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') || github.event.inputs.deploy == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: Get Layer ARN
+        id: layer-arn
+        run: |
+          LAYER_ARN=$(aws cloudformation describe-stacks \
+            --stack-name eks-kubectl-layer-stack \
+            --query 'Stacks[0].Outputs[?OutputKey==`LayerVersionArn`].OutputValue' \
+            --output text \
+            --region ${{ env.LAMBDA_REGION }})
+          echo "layer_arn=$LAYER_ARN" >> $GITHUB_OUTPUT
+
+      - name: Deploy Serverless Controller
+        run: |
+          cd samples/serverless-functions
+          sam deploy \
+            --template-file sam.yaml \
+            --stack-name serverless-k8s-controller-stack \
+            --parameter-overrides \
+              ClusterName=${{ secrets.EKS_CLUSTER_NAME }} \
+              FunctionName=serverless-k8s-controller \
+              LambdaLayerKubectlArn=${{ steps.layer-arn.outputs.layer_arn }} \
+              LambdaRoleArn=${{ secrets.LAMBDA_ROLE_ARN }} \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ env.LAMBDA_REGION }} \
+            --no-fail-on-empty-changeset

@@ -1,0 +1,7 @@
+{
+  "action": "delete",
+  "cluster_name": "my-eks-cluster",
+  "function": {
+    "name": "hello-world"
+  }
+}

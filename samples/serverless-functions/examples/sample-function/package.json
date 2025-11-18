@@ -1,0 +1,20 @@
+{
+  "name": "sample-serverless-function",
+  "version": "1.0.0",
+  "description": "Sample serverless function for Kubernetes",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "serverless",
+    "kubernetes",
+    "lambda"
+  ],
+  "author": "",
+  "license": "MIT-0",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
