@@ -1,0 +1,30 @@
+{
+  "action": "deploy",
+  "cluster_name": "my-eks-cluster",
+  "function": {
+    "name": "hello-knative",
+    "image": "gcr.io/knative-samples/helloworld-go:latest",
+    "port": 8080,
+    "replicas": {
+      "min": 0,
+      "max": 10
+    },
+    "resources": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi"
+      },
+      "limits": {
+        "cpu": "1000m",
+        "memory": "512Mi"
+      }
+    },
+    "concurrency": 100,
+    "env": [
+      {
+        "name": "TARGET",
+        "value": "World"
+      }
+    ]
+  }
+}

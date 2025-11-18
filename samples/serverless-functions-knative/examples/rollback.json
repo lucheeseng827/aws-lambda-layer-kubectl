@@ -1,0 +1,8 @@
+{
+  "action": "rollback",
+  "cluster_name": "my-eks-cluster",
+  "function": {
+    "name": "hello-knative"
+  },
+  "revision": "hello-knative-00001"
+}

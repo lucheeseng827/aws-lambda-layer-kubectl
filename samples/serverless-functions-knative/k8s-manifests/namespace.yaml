@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: serverless-knative
+  labels:
+    name: serverless-knative
+    managed-by: lambda-kubectl
+    serving.knative.dev/release: devel

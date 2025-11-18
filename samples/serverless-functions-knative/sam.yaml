@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Description: EKS cluster name
+    Default: default
+  FunctionName:
+    Type: String
+    Description: Lambda function name
+    Default: serverless-knative-controller
+  LambdaLayerKubectlArn:
+    Type: String
+    Description: ARN of the kubectl Lambda Layer
+  LambdaRoleArn:
+    Type: String
+    Description: ARN of the Lambda execution role with EKS permissions
+
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless Functions on Kubernetes with Knative Controller
+
+Resources:
+  ServerlessKnativeController:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Handler: main
+      CodeUri: ./func.d
+      Runtime: provided
+      Layers:
+        - !Ref LambdaLayerKubectlArn
+      MemorySize: 512
+      Timeout: 120
+      Environment:
+        Variables:
+          cluster_name: !Ref ClusterName
+      Role: !Ref LambdaRoleArn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: Lambda Function ARN
+    Value: !GetAtt ServerlessKnativeController.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionArn'
+
+  LambdaFunctionName:
+    Description: Lambda Function Name
+    Value: !Ref ServerlessKnativeController
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionName'

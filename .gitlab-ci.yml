@@ -97,7 +97,7 @@ deploy-layer:
   tags:
     - docker
 
-# Deploy Serverless Controller Function
+# Deploy Native K8s Serverless Controller Function
 deploy-serverless-controller:
   stage: deploy
   image: public.ecr.aws/sam/build-provided:latest
@@ -114,7 +114,7 @@ deploy-serverless-controller:
         --output text \
         --region ${LAMBDA_REGION})
       echo "Using Layer ARN $LAYER_ARN"
-    - echo "Deploying Serverless Controller..."
+    - echo "Deploying Native K8s Serverless Controller..."
     - cd samples/serverless-functions
     - sam deploy
         --template-file sam.yaml
@@ -127,7 +127,46 @@ deploy-serverless-controller:
         --capabilities CAPABILITY_IAM
         --region ${LAMBDA_REGION}
         --no-fail-on-empty-changeset
-    - echo "Deployment complete!"
+    - echo "Native K8s Controller deployment complete!"
+  only:
+    - master
+    - main
+    - /^claude\/.*$/
+  when: manual
+  tags:
+    - docker
+
+# Deploy Knative Serverless Controller Function
+deploy-knative-controller:
+  stage: deploy
+  image: public.ecr.aws/sam/build-provided:latest
+  needs:
+    - deploy-layer
+  before_script:
+    - pip install awscli aws-sam-cli
+  script:
+    - echo "Getting Layer ARN..."
+    - |
+      LAYER_ARN=$(aws cloudformation describe-stacks \
+        --stack-name ${LAYER_NAME}-stack \
+        --query 'Stacks[0].Outputs[?OutputKey==`LayerVersionArn`].OutputValue' \
+        --output text \
+        --region ${LAMBDA_REGION})
+      echo "Using Layer ARN $LAYER_ARN"
+    - echo "Deploying Knative Serverless Controller..."
+    - cd samples/serverless-functions-knative
+    - sam deploy
+        --template-file sam.yaml
+        --stack-name serverless-knative-controller-stack
+        --parameter-overrides
+          ClusterName=${EKS_CLUSTER_NAME}
+          FunctionName=serverless-knative-controller
+          LambdaLayerKubectlArn=${LAYER_ARN}
+          LambdaRoleArn=${LAMBDA_ROLE_ARN}
+        --capabilities CAPABILITY_IAM
+        --region ${LAMBDA_REGION}
+        --no-fail-on-empty-changeset
+    - echo "Knative Controller deployment complete!"
   only:
     - master
     - main

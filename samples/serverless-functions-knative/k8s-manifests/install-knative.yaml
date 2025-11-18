@@ -1,0 +1,44 @@
+# Knative Installation Guide
+# This file contains commands to install Knative Serving on your EKS cluster
+
+# Installation Steps:
+
+# 1. Install Knative Serving CRDs
+# kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.12.0/serving-crds.yaml
+
+# 2. Install Knative Serving core components
+# kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.12.0/serving-core.yaml
+
+# 3. Install networking layer (Kourier - lightweight ingress for Knative)
+# kubectl apply -f https://github.com/knative/net-kourier/releases/download/knative-v1.12.0/kourier.yaml
+
+# 4. Configure Knative to use Kourier
+# kubectl patch configmap/config-network \
+#   --namespace knative-serving \
+#   --type merge \
+#   --patch '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
+
+# 5. Configure DNS (Magic DNS for development, use real DNS in production)
+# kubectl apply -f https://github.com/knative/serving/releases/download/knative-v1.12.0/serving-default-domain.yaml
+
+# 6. Verify installation
+# kubectl get pods -n knative-serving
+# kubectl get pods -n kourier-system
+
+# Alternative networking layers:
+# - Istio (for advanced traffic management and service mesh)
+# - Contour (for production-grade ingress)
+# - Ambassador (API gateway features)
+
+# For production with AWS:
+# 7. Configure domain with Route53 (optional)
+# kubectl patch configmap/config-domain \
+#   --namespace knative-serving \
+#   --type merge \
+#   --patch '{"data":{"example.com":""}}'
+
+# 8. Configure autoscaling
+# kubectl patch configmap/config-autoscaler \
+#   --namespace knative-serving \
+#   --type merge \
+#   --patch '{"data":{"scale-to-zero-grace-period":"30s","stable-window":"60s"}}'

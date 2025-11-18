@@ -1,0 +1,17 @@
+{
+  "action": "traffic-split",
+  "cluster_name": "my-eks-cluster",
+  "function": {
+    "name": "hello-knative"
+  },
+  "traffic": [
+    {
+      "revision": "hello-knative-00001",
+      "percent": 80
+    },
+    {
+      "revision": "hello-knative-00002",
+      "percent": 20
+    }
+  ]
+}

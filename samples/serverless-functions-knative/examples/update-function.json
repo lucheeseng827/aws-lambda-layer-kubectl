@@ -1,0 +1,8 @@
+{
+  "action": "update",
+  "cluster_name": "my-eks-cluster",
+  "function": {
+    "name": "hello-knative",
+    "image": "gcr.io/knative-samples/helloworld-go:v2"
+  }
+}
